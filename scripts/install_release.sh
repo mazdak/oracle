@@ -54,13 +54,21 @@ fi
 
 RELEASE_API_URL="https://api.github.com/repos/$OWNER/$REPO/releases/$RELEASE_TAG"
 
-mapfile -t asset_info < <(
-  curl -fsSL "$RELEASE_API_URL" | python3 - "$ASSET_FILTER" <<'PY'
+asset_info="$(curl -fsSL "$RELEASE_API_URL" | python3 - "$ASSET_FILTER" <<'PY'
 import json
 import sys
 
 filter_str = sys.argv[1].lower()
-data = json.load(sys.stdin)
+raw = sys.stdin.read()
+if not raw:
+    print("error: could not fetch release data from GitHub", file=sys.stderr)
+    sys.exit(1)
+
+try:
+    data = json.loads(raw)
+except json.JSONDecodeError as exc:
+    print(f"error: release API response is not valid JSON ({exc})", file=sys.stderr)
+    sys.exit(1)
 tag_name = data.get("tag_name", "")
 for asset in data.get("assets", []):
     name = asset.get("name", "")
@@ -72,16 +80,23 @@ for asset in data.get("assets", []):
         sys.exit(0)
 sys.exit(1)
 PY
-)
+)"
 
-if [[ ${#asset_info[@]} -lt 2 ]]; then
+if [[ -z "$asset_info" ]]; then
   echo "error: no release asset matching '$ASSET_FILTER' found for $TARGET_TRIPLE" >&2
   exit 1
 fi
 
-ASSET_URL=${asset_info[0]}
-ASSET_NAME=${asset_info[1]}
-RELEASE_VERSION=${asset_info[2]:-}
+{
+  read -r ASSET_URL
+  read -r ASSET_NAME
+  read -r RELEASE_VERSION
+} <<< "$asset_info"
+
+if [[ -z "$ASSET_URL" || -z "$ASSET_NAME" ]]; then
+  echo "error: no release asset matching '$ASSET_FILTER' found for $TARGET_TRIPLE" >&2
+  exit 1
+fi
 
 TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
