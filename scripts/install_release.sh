@@ -5,8 +5,8 @@ OWNER=${GITHUB_OWNER:-mazdak}
 REPO=${GITHUB_REPO:-oracle}
 INSTALL_DIR=${ORACLE_INSTALL_DIR:-$HOME/.local/bin}
 TARGET_TRIPLE=${ORACLE_TARGET_TRIPLE:-}
-ASSET_FILTER=${ORACLE_ASSET_FILTER:-}
 RELEASE_TAG=${ORACLE_RELEASE_TAG:-latest}
+TARGET_ASSET=${ORACLE_ASSET_NAME:-}
 
 detect_target() {
   if [[ -n "$TARGET_TRIPLE" ]]; then
@@ -48,55 +48,23 @@ detect_target() {
 
 detect_target
 
-if [[ -z "$ASSET_FILTER" ]]; then
-  ASSET_FILTER="$TARGET_TRIPLE"
+if [[ "$RELEASE_TAG" == "latest" ]]; then
+  RELEASE_TAG=$(curl -fsSL -o /dev/null -w "%{url_effective}" "https://github.com/$OWNER/$REPO/releases/latest")
+  RELEASE_TAG=${RELEASE_TAG##*/}
+  if [[ -z "$RELEASE_TAG" ]]; then
+    echo "error: could not determine latest release tag" >&2
+    exit 1
+  fi
 fi
 
-RELEASE_API_URL="https://api.github.com/repos/$OWNER/$REPO/releases/$RELEASE_TAG"
-
-asset_info="$(curl -fsSL "$RELEASE_API_URL" | python3 - "$ASSET_FILTER" <<'PY'
-import json
-import sys
-
-filter_str = sys.argv[1].lower()
-raw = sys.stdin.read()
-if not raw:
-    print("error: could not fetch release data from GitHub", file=sys.stderr)
-    sys.exit(1)
-
-try:
-    data = json.loads(raw)
-except json.JSONDecodeError as exc:
-    print(f"error: release API response is not valid JSON ({exc})", file=sys.stderr)
-    sys.exit(1)
-tag_name = data.get("tag_name", "")
-for asset in data.get("assets", []):
-    name = asset.get("name", "")
-    name_lower = name.lower()
-    if filter_str in name_lower and "oracle" in name_lower:
-        print(asset["browser_download_url"])
-        print(asset["name"])
-        print(tag_name)
-        sys.exit(0)
-sys.exit(1)
-PY
-)"
-
-if [[ -z "$asset_info" ]]; then
-  echo "error: no release asset matching '$ASSET_FILTER' found for $TARGET_TRIPLE" >&2
-  exit 1
+if [[ -n "${ORACLE_ASSET_NAME:-}" ]]; then
+  ASSET_NAME="$ORACLE_ASSET_NAME"
+else
+  ASSET_NAME="oracle-${RELEASE_TAG}-${TARGET_TRIPLE}.tar.gz"
 fi
+ASSET_URL="https://github.com/$OWNER/$REPO/releases/download/$RELEASE_TAG/$ASSET_NAME"
 
-{
-  read -r ASSET_URL
-  read -r ASSET_NAME
-  read -r RELEASE_VERSION
-} <<< "$asset_info"
-
-if [[ -z "$ASSET_URL" || -z "$ASSET_NAME" ]]; then
-  echo "error: no release asset matching '$ASSET_FILTER' found for $TARGET_TRIPLE" >&2
-  exit 1
-fi
+RELEASE_VERSION="$RELEASE_TAG"
 
 TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
@@ -118,7 +86,7 @@ case "$ASSET_NAME" in
     ;;
 esac
 
-BINARY_PATH=$(find "$EXTRACT_DIR" -type f -name oracle -perm /111 -print -quit)
+BINARY_PATH=$(find "$EXTRACT_DIR" -type f -name oracle -perm -111 -print -quit)
 if [[ -z "$BINARY_PATH" ]]; then
   echo "error: could not locate the oracle binary in downloaded asset" >&2
   exit 1

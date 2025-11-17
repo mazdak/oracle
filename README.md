@@ -21,7 +21,7 @@ The script compiles `oracle`, copies `target/release/oracle` into the install di
 Download the latest pre-built binary from the GitHub releases page by streaming the release-aware installer script and letting it drop the `oracle` executable into `~/.local/bin` (or your custom install directory):
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/mazdak/oracle/main/scripts/install_release.sh | bash
+curl -sSL https://raw.githubusercontent.com/mazdak/oracle/refs/heads/master/scripts/install_release.sh | bash
 ```
 
 The release installer:
