@@ -17,6 +17,7 @@ const OPENAI_POLL_TIMEOUT_SECS: u64 = 120;
 const OPENAI_POLL_START_DELAY_MS: u64 = 500;
 const OPENAI_POLL_MAX_DELAY_MS: u64 = 5_000;
 const OPENAI_JSON_PREVIEW_CHARS: usize = 2_000;
+const DEFAULT_OPENAI_MODEL: &str = "gpt-5.2-pro";
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct OracleRequest {
@@ -24,8 +25,9 @@ pub struct OracleRequest {
     pub problem: String,
     /// List of file paths to include as context. Paths are resolved relative to the working dir.
     pub files: Option<Vec<String>>,
-    /// Optional extra context or notes.
-    pub extra_context: Option<String>,
+    /// Optional OpenAI model override (defaults to gpt-5.2-pro).
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 #[derive(Clone)]
@@ -66,17 +68,6 @@ impl OracleService {
         response.push_str(&request.problem);
         response.push_str("\n\n");
 
-        match &request.extra_context {
-            Some(extra) if !extra.trim().is_empty() => {
-                response.push_str("Extra context:\n");
-                response.push_str(extra);
-                response.push_str("\n\n");
-            }
-            _ => {
-                response.push_str("Extra context: (not provided)\n\n");
-            }
-        }
-
         response.push_str("Files provided:\n");
         match &request.files {
             Some(files) if !files.is_empty() => {
@@ -97,13 +88,17 @@ impl OracleService {
             return Ok(Self::test_mode_response(&request));
         }
 
+        let model = request
+            .model
+            .clone()
+            .unwrap_or_else(|| DEFAULT_OPENAI_MODEL.to_string());
         let user_prompt = build_prompt(&request).await;
 
         let api_key = env::var("OPENAI_API_KEY").map_err(|_| {
             McpError::internal_error("Environment variable OPENAI_API_KEY is not set", None)
         })?;
 
-        // Build Responses API request for gpt-5-pro with high reasoning effort.
+        // Build Responses API request with high reasoning effort.
         #[derive(serde::Serialize, Clone)]
         struct Reasoning {
             effort: String,
@@ -128,7 +123,7 @@ impl OracleService {
             attempts += 1;
 
             let body = ResponseRequest {
-                model: "gpt-5-pro".to_string(),
+                model: model.clone(),
                 input: user_prompt.clone(),
                 instructions: Some(
                     "You are Oracle, a meticulous, senior-level coding assistant. Always think step-by-step and consider edge cases before answering. When relevant, suggest concrete code changes and explain why.".to_string(),
@@ -356,12 +351,6 @@ async fn build_prompt(request: &OracleRequest) -> String {
     user_prompt.push_str(&request.problem);
     user_prompt.push_str("\n\n");
 
-    if let Some(extra) = &request.extra_context {
-        user_prompt.push_str("### Extra context\n");
-        user_prompt.push_str(extra);
-        user_prompt.push_str("\n\n");
-    }
-
     if !context_blocks.is_empty() {
         let header = "### Project files\n";
         let trunc_notice =
@@ -528,7 +517,8 @@ impl rmcp::ServerHandler for OracleService {
         ServerInfo {
             capabilities: ServerCapabilities::builder().enable_tools().build(),
             instructions: Some(
-                "Oracle is a coding-focused MCP server that uses OpenAI's gpt-5-pro model with high reasoning to answer questions about your code. Use the `solve_coding_problem` tool with a coding problem and optional file paths; it will analyze the problem and files and propose concrete fixes.".into(),
+                "Oracle is a coding-focused MCP server that uses OpenAI's gpt-5.2-pro model with high reasoning to answer questions about your code. Use the `solve_coding_problem` tool with a coding problem and optional file paths; it will analyze the problem and files and propose concrete fixes."
+                    .into(),
             ),
             ..Default::default()
         }
